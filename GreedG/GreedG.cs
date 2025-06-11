@@ -47,7 +47,10 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
         private Waypoint? _waypoint;
 
+        private Waypoint? _waypointNew;
+
         private Waypoint? changedWaypoint;
+        private int _communicationTicks = 0;
         private int _logicTicks = 0;
         private int _ticksSinceHeartbeat = 0;
         private int _deadlockTimer = 0;
@@ -56,6 +59,7 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
         private bool goingToNewNode;
 
+        private GreedyGraph RootNode;
         private GreedyGraph CurrentNode;
 
         private GreedyGraph NextNode;
@@ -65,6 +69,8 @@ namespace Maes.ExplorationAlgorithm.GreedG
         private ExplorationState explorationState;
 
         private bool firstFlag;
+
+        private int AlgorithmNumber;
 
         private enum AlgorithmState
         {
@@ -146,9 +152,9 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
         public enum NodeState
         {
-            Free,
-            Assigned,
-            Explored,
+            Free = 0,
+            Assigned = 1,
+            Explored = 2,
         }
 
         private class GreedyGraph
@@ -159,21 +165,90 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
             public int Cost;
 
+            public int Utility;
+
             public List<Neighbour> Neighbours;
 
             
 
-            public GreedyGraph(NodeState state)
+            public GreedyGraph(NodeState state, int utility)
             {
                 State = state;
                 Neighbours = new List<Neighbour>();
 
                 Cost = 300;
 
+                Utility = utility;
+
                 leftX = Int32.MinValue;
                 rightX = Int32.MinValue;
                 downY = Int32.MinValue;
                 upY = Int32.MinValue;
+            }
+
+            public GreedyGraph(GreedyGraph node){
+                State = node.State;
+
+                Neighbours = new List<Neighbour>();
+
+                Cost = node.Cost;
+
+                Utility = node.Utility;
+
+                leftX = node.leftX;
+                rightX = node.rightX;
+                downY = node.downY;
+                upY = node.upY;
+
+                for(int i = 0; i < node.Neighbours.Count; ++i){
+                    Neighbours.Add(new Neighbour(node.Neighbours[i].doorway, new GreedyGraph(node.Neighbours[i].node)));
+                }
+
+            }
+
+            public void copyNode(GreedyGraph node){
+
+                if(node.State > State){
+                    State = node.State;
+                }
+
+                if(node.Cost != 300){
+                    Cost = node.Cost;
+                }
+
+                Utility = node.Utility;
+
+                if(node.leftX != Int32.MinValue){
+                    leftX = node.leftX;
+                }
+
+                if(node.rightX != Int32.MinValue){
+                    rightX = node.rightX;
+                }
+
+                if(node.downY != Int32.MinValue){
+                    downY = node.downY;
+                }
+
+                if(node.upY != Int32.MinValue){
+                    upY = node.upY;
+                }
+
+                for(int i = 0; i < node.Neighbours.Count; ++i){
+                    bool flag = true;
+                    for(int j = 0; j < Neighbours.Count; ++j){
+                        if(Neighbours[j].doorway.Equals(node.Neighbours[i].doorway)){
+                            Neighbours[j].node.copyNode(node.Neighbours[i].node);
+                            flag = false;
+                        }
+                    }
+
+                    if(flag){
+                        Neighbours.Add(new Neighbour(node.Neighbours[i].doorway, new GreedyGraph(node.Neighbours[i].node)));
+                    }
+
+                }
+
             }
 
             public void addNeighbour(GreedyGraph neighbour, Doorway door){
@@ -215,8 +290,8 @@ namespace Maes.ExplorationAlgorithm.GreedG
             public void resetNeighbour(GreedyGraph newNode, Doorway door){
                 for(int i = 0; i < Neighbours.Count; ++i){
                     if(Neighbours[i].doorway.Equals(door)){
-                        Neighbours[i] = new Neighbour(door, newNode);
-
+                       //Neighbours[i].node.copyNode(newNode);
+                       Neighbours[i].node = newNode;
                     }
                 }
             }
@@ -254,12 +329,16 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
         }
         
-        public GreedGAlgorithm()
+        public GreedGAlgorithm(int algorithmnumber)
         {
 
             neighbourList = new NeighbourList(); 
             
-            CurrentNode = new GreedyGraph(NodeState.Free);
+            CurrentNode = new GreedyGraph(NodeState.Free, 100);
+
+            RootNode = CurrentNode;
+
+            AlgorithmNumber = algorithmnumber;
             
             goingToNewNode = false;
             explorationState = ExplorationState.Idle;
@@ -287,13 +366,20 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
         public void UpdateLogic()
         {
+            
+            /*foreach (var neighbour in CurrentNode.Neighbours){
+                neighbour.doorway.Center.DrawDebugLineFromRobot(_map, Color.yellow);
+                //Debug.Log(door);
+            }*/
 
             
             //message
-            if(Id == 1 && firstFlag ){
-                _controller.Broadcast(CurrentNode);
+            if (Id == 1 && firstFlag)
+            {
+                _controller.Broadcast(RootNode);
                 _controller.Broadcast(neighbourList);
-                if(CurrentNode.State == NodeState.Free){
+                if (CurrentNode.State == NodeState.Free)
+                {
                     CurrentNode.State = NodeState.Assigned;
                 }
                 explorationState = ExplorationState.AssignedToCurrent;
@@ -306,11 +392,28 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
             if(Id != 1 && firstFlag && receivedPos.Any() && receivedNeighbours.Any()){
                 CurrentNode = receivedPos[0];
+                RootNode = CurrentNode;
+                //RootNode.copyNode(receivedPos[0]);
                 neighbourList = receivedNeighbours[0];
                 firstFlag = false;
-            }
+            }/**/
 
-            
+
+            _communicationTicks++;
+            if (_communicationTicks == 20)
+            { 
+                _controller.Broadcast(RootNode);
+
+                //var receivedPos = new List<GreedyGraph>(_controller.ReceiveBroadcast().OfType<GreedyGraph>());
+
+                if(receivedPos.Any()){
+                    foreach(var node in receivedPos){
+                        RootNode.copyNode(node);
+                    }
+                }
+
+                _communicationTicks = 0;
+            }/**/
             
 
             _logicTicks++;
@@ -320,6 +423,8 @@ namespace Maes.ExplorationAlgorithm.GreedG
                 /*Debug.Log(Id);
                 Debug.Log(explorationState);
                 CurrentNode.DebugNode();*/
+
+                
 
                 
                 var ownHeartbeat = new HeartbeatMessage(_controller.GetSlamMap());
@@ -367,10 +472,10 @@ namespace Maes.ExplorationAlgorithm.GreedG
             
 
 
-            /*foreach (var neighbour in CurrentNode.Neighbours){
+            foreach (var neighbour in CurrentNode.Neighbours){
                 neighbour.doorway.Center.DrawDebugLineFromRobot(_map, Color.yellow);
                 //Debug.Log(door);
-            }*/
+            }
 
 
             if (_deadlockTimer >= 5)
@@ -432,25 +537,47 @@ namespace Maes.ExplorationAlgorithm.GreedG
             
             
             if(_waypoint == null){
-                if(goingToNewNode){
-                    
-                    CurrentNode = NextNode;
-                    goingToNewNode = false;
-                    explorationState = ExplorationState.AssignedToCurrent;
-                    
-                    
+
+                if(_waypointNew != null){
+                    _waypoint = _waypointNew;
+                    _waypointNew = null;
                 }
+                else{
+                    if(goingToNewNode){
+                    
+                        CurrentNode = NextNode;
+                        goingToNewNode = false;
+                        explorationState = ExplorationState.AssignedToCurrent;
+                    }
                 
 
-                if(isCurrentNodeDone()){
+                    if(isCurrentNodeDone()){
 
-                    finalDoorCheck();
-                    CurrentNode.setCost();
-                    CurrentNode.State = NodeState.Explored;
-                    explorationState = ExplorationState.Idle;
-                    clearDuplicates();
-                    setNewDestination();
+                        finalDoorCheck();
+                        CurrentNode.setCost();
+                        CurrentNode.State = NodeState.Explored;
+                        explorationState = ExplorationState.Idle;
+                        clearDuplicates();
+                        setNeighbourUtilities();
+                        setNewDestination();
+                        _controller.StopCurrentTask();
+                    }
                 }
+
+                
+            }
+
+            if(goingToNewNode){
+                
+                //Debug.Log(NextNode.State);
+
+                if(NextNode.State == NodeState.Explored){
+                    goingToNewNode = false;
+                    _waypoint = null;
+                    _waypointNew = null;
+                }
+                    
+                    
             }
 
             switch (_currentState)
@@ -667,6 +794,28 @@ namespace Maes.ExplorationAlgorithm.GreedG
             if(!CurrentNode.Neighbours.Any()){
                 return false;
             }
+
+            switch (AlgorithmNumber)
+            {
+                case 0:
+                    return setNewDestinationSimple();
+                case 1:
+                    return setNewDestinationUtil();
+                case 2:
+                    return setNewDestinationEuclideanSimple();
+                case 3:
+                    return setNewDestinationEuclideanPath();
+                case 4:
+                    return setNewDestinationManhattanSimple();
+                case 5:
+                    return setNewDestinationManhattanPath();
+                default:
+                    return false;
+            }
+        }
+
+        private bool setNewDestinationSimple()
+        {
             
             List<GreedyGraph> isChecked = new List<GreedyGraph>();
 
@@ -674,15 +823,15 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
             GreedyGraph targetNeighbour = CurrentNode;
             Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
             int minCost = Int32.MaxValue;
 
             bool flag = false;
 
-            int a = 0, b = 0;
-
             toCheck.Add((CurrentNode, 0));
 
             int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
 
 
             for(int i = 0; i < toCheck.Count; ++i){
@@ -701,7 +850,7 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
                     if(checkedFlag){
 
-                        if(i == 1){
+                        if(i == 0){
                             currCost = (int)Vector2.Distance(_position, toCheck[i].Item1.Neighbours[j].doorway.Center);
                         }
                         else{
@@ -709,14 +858,158 @@ namespace Maes.ExplorationAlgorithm.GreedG
                         }
 
                         if(toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free){
+                            flag = true;
                         
                             if(currCost < minCost){
                                 targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
                                 targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
                                 minCost = currCost;
-                                a = i;
-                                b = j;
-                                flag = true;
+                                
+                            }
+
+                        }
+                        toCheck.Add((toCheck[i].Item1.Neighbours[j].node, currCost));
+                    }
+                    
+                }
+
+                isChecked.Add(toCheck[i].Item1);
+            }
+
+            if(flag){
+                if(setDestinationWaypoint(targetNeighbour, targetDoorway)){
+                    targetNeighbour.State = NodeState.Assigned;
+                    explorationState = ExplorationState.AssignedToNext;
+                    goingToNewNode = true;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        private bool setNewDestinationUtil()
+        {
+            
+            List<GreedyGraph> isChecked = new List<GreedyGraph>();
+
+            List<(GreedyGraph, int)> toCheck = new List<(GreedyGraph, int)>();
+
+            GreedyGraph targetNeighbour = CurrentNode;
+            Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
+            int minCost = Int32.MaxValue;
+
+            bool flag = false;
+
+            toCheck.Add((CurrentNode, 0));
+
+            int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
+
+
+            for(int i = 0; i < toCheck.Count; ++i){
+                for(int j = 0; j < toCheck[i].Item1.Neighbours.Count; ++j)
+                {
+                    currCost = Int32.MaxValue;
+                    
+                    bool checkedFlag = true;
+
+                    for(int k = 0; k < isChecked.Count; ++k){
+                        if(toCheck[i].Item1.Neighbours[j].node.Equals(isChecked[k])){
+                            checkedFlag = false;
+                            break;
+                        }
+                    }
+
+                    if(checkedFlag){
+
+                        if(i == 0){
+                            currCost = (int)Vector2.Distance(_position, toCheck[i].Item1.Neighbours[j].doorway.Center);
+                        }
+                        else{
+                            currCost = toCheck[i].Item1.Cost + toCheck[i].Item2;
+                        }
+
+                        if(toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free){
+                            flag = true;
+
+                            currUtility = toCheck[i].Item1.Neighbours[j].node.Utility - currCost;
+
+                            if(currUtility > maxUtility){
+                                targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
+                                targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
+                                maxUtility = currUtility;
+                            }
+
+                        }
+                        toCheck.Add((toCheck[i].Item1.Neighbours[j].node, currCost));
+                    }/**/
+
+                    
+                }
+
+                isChecked.Add(toCheck[i].Item1);
+            }
+
+            if(flag){
+                if(setDestinationWaypoint(targetNeighbour, targetDoorway)){
+                    targetNeighbour.State = NodeState.Assigned;
+                    explorationState = ExplorationState.AssignedToNext;
+                    goingToNewNode = true;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        private bool setNewDestinationEuclideanSimple()
+        {
+            
+            List<GreedyGraph> isChecked = new List<GreedyGraph>();
+
+            List<(GreedyGraph, int)> toCheck = new List<(GreedyGraph, int)>();
+
+            GreedyGraph targetNeighbour = CurrentNode;
+            Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
+            int minCost = Int32.MaxValue;
+
+            bool flag = false;
+
+            toCheck.Add((CurrentNode, 0));
+
+            int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
+
+
+            for(int i = 0; i < toCheck.Count; ++i){
+                for(int j = 0; j < toCheck[i].Item1.Neighbours.Count; ++j)
+                {
+                    currCost = Int32.MaxValue;
+                    
+                    bool checkedFlag = true;
+
+                    for(int k = 0; k < isChecked.Count; ++k){
+                        if(toCheck[i].Item1.Neighbours[j].node.Equals(isChecked[k])){
+                            checkedFlag = false;
+                            break;
+                        }
+                    }
+
+                    if(checkedFlag){
+
+                        currCost = (int)Vector2.Distance(_position, toCheck[i].Item1.Neighbours[j].doorway.Center);
+
+                        if(toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free){
+                            flag = true;
+                        
+                            if(currCost < minCost){
+                                targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
+                                targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
+                                minCost = currCost;
+                                
                             }
 
                         }
@@ -741,39 +1034,276 @@ namespace Maes.ExplorationAlgorithm.GreedG
             return false;
         }
 
-
-        // Set the exact point to enter
-        private bool setDestinationWaypoint(GreedyGraph neighbour, Doorway door){
+        private bool setNewDestinationEuclideanPath()
+        {
             
+            List<GreedyGraph> isChecked = new List<GreedyGraph>();
+
+            List<(GreedyGraph, int, Vector2Int)> toCheck = new List<(GreedyGraph, int, Vector2Int doorway)>();
+
+            GreedyGraph targetNeighbour = CurrentNode;
+            Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
+            int minCost = Int32.MaxValue;
+
             bool flag = false;
 
-            if(door.Orientation == Doorway.DoorOrientation.Horizontal){
+            toCheck.Add((CurrentNode, 0, _position));
 
-                if(neighbour.upY != Int32.MinValue){
-                    _waypoint = new Waypoint(door.Center + Vector2Int.down + Vector2Int.down, Waypoint.WaypointType.Greed);
-                    flag = true;
-                }else{
+            int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
+
+
+            for(int i = 0; i < toCheck.Count; ++i){
+                for(int j = 0; j < toCheck[i].Item1.Neighbours.Count; ++j)
+                {
+                    currCost = Int32.MaxValue;
+                    
+                    bool checkedFlag = true;
+
+                    for(int k = 0; k < isChecked.Count; ++k){
+                        if(toCheck[i].Item1.Neighbours[j].node.Equals(isChecked[k])){
+                            checkedFlag = false;
+                            break;
+                        }
+                    }
+
+                    if(checkedFlag){
+
+                        currCost = toCheck[i].Item2 + (int)Vector2.Distance(toCheck[i].Item3, toCheck[i].Item1.Neighbours[j].doorway.Center);
+
+                        if(toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free){
+                            flag = true;
+                        
+                            if(currCost < minCost){
+                                targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
+                                targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
+                                minCost = currCost;
+                                
+                            }
+
+                        }
+                        toCheck.Add((toCheck[i].Item1.Neighbours[j].node, currCost, toCheck[i].Item1.Neighbours[j].doorway.Center));
+                    }
+
+                    
+                }
+
+                isChecked.Add(toCheck[i].Item1);
+            }
+
+            if(flag){
+                if(setDestinationWaypoint(targetNeighbour, targetDoorway)){
+                    targetNeighbour.State = NodeState.Assigned;
+                    explorationState = ExplorationState.AssignedToNext;
+                    goingToNewNode = true;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        private bool setNewDestinationManhattanSimple()
+        {
+            
+            List<GreedyGraph> isChecked = new List<GreedyGraph>();
+
+            List<(GreedyGraph, int)> toCheck = new List<(GreedyGraph, int)>();
+
+            GreedyGraph targetNeighbour = CurrentNode;
+            Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
+            int minCost = Int32.MaxValue;
+
+            bool flag = false;
+
+            toCheck.Add((CurrentNode, 0));
+
+            int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
+
+
+            for(int i = 0; i < toCheck.Count; ++i){
+                for(int j = 0; j < toCheck[i].Item1.Neighbours.Count; ++j)
+                {
+                    currCost = Int32.MaxValue;
+                    
+                    bool checkedFlag = true;
+
+                    for(int k = 0; k < isChecked.Count; ++k){
+                        if(toCheck[i].Item1.Neighbours[j].node.Equals(isChecked[k])){
+                            checkedFlag = false;
+                            break;
+                        }
+                    }
+
+                    if(checkedFlag){
+
+                        currCost = (int)ManhattanCalc(_position.x, toCheck[i].Item1.Neighbours[j].doorway.Center.x, _position.y, toCheck[i].Item1.Neighbours[j].doorway.Center.y);
+
+                        if(toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free){
+                            flag = true;
+                        
+                            if(currCost < minCost){
+                                targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
+                                targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
+                                minCost = currCost;
+                                
+                            }
+
+                        }
+                        toCheck.Add((toCheck[i].Item1.Neighbours[j].node, currCost));
+                    }
+
+                    
+                }
+
+                isChecked.Add(toCheck[i].Item1);
+            }
+
+            if(flag){
+                if(setDestinationWaypoint(targetNeighbour, targetDoorway)){
+                    targetNeighbour.State = NodeState.Assigned;
+                    explorationState = ExplorationState.AssignedToNext;
+                    goingToNewNode = true;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        private bool setNewDestinationManhattanPath()
+        {
+
+            List<GreedyGraph> isChecked = new List<GreedyGraph>();
+
+            List<(GreedyGraph, int, Vector2Int)> toCheck = new List<(GreedyGraph, int, Vector2Int doorway)>();
+
+            GreedyGraph targetNeighbour = CurrentNode;
+            Doorway targetDoorway = CurrentNode.Neighbours[0].doorway;
+            int maxUtility = Int32.MinValue;
+            int minCost = Int32.MaxValue;
+
+            bool flag = false;
+
+            toCheck.Add((CurrentNode, 0, _position));
+
+            int currCost = Int32.MaxValue;
+            int currUtility = Int32.MinValue;
+
+
+            for (int i = 0; i < toCheck.Count; ++i)
+            {
+                for (int j = 0; j < toCheck[i].Item1.Neighbours.Count; ++j)
+                {
+                    currCost = Int32.MaxValue;
+
+                    bool checkedFlag = true;
+
+                    for (int k = 0; k < isChecked.Count; ++k)
+                    {
+                        if (toCheck[i].Item1.Neighbours[j].node.Equals(isChecked[k]))
+                        {
+                            checkedFlag = false;
+                            break;
+                        }
+                    }
+
+                    if (checkedFlag)
+                    {
+
+                        currCost = toCheck[i].Item2 + (int)ManhattanCalc(toCheck[i].Item3.x, toCheck[i].Item1.Neighbours[j].doorway.Center.x, toCheck[i].Item3.y, toCheck[i].Item1.Neighbours[j].doorway.Center.y);
+
+                        if (toCheck[i].Item1.Neighbours[j].node.State == NodeState.Free)
+                        {
+                            flag = true;
+
+                            if (currCost < minCost)
+                            {
+                                targetNeighbour = toCheck[i].Item1.Neighbours[j].node;
+                                targetDoorway = toCheck[i].Item1.Neighbours[j].doorway;
+                                minCost = currCost;
+
+                            }
+
+                        }
+                        toCheck.Add((toCheck[i].Item1.Neighbours[j].node, currCost, toCheck[i].Item1.Neighbours[j].doorway.Center));
+                    }
+
+
+                }
+
+                isChecked.Add(toCheck[i].Item1);
+            }
+
+            if (flag)
+            {
+                if (setDestinationWaypoint(targetNeighbour, targetDoorway))
+                {
+                    targetNeighbour.State = NodeState.Assigned;
+                    explorationState = ExplorationState.AssignedToNext;
+                    goingToNewNode = true;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int ManhattanCalc(int x1, int x2, int y1, int y2)
+        {
+            return Math.Abs(x1 - x2) + Math.Abs(y1 - y2);
+        }
+
+
+        // Set the exact point to enter
+        private bool setDestinationWaypoint(GreedyGraph neighbour, Doorway door)
+        {
+
+            bool flag = false;
+
+            if (door.Orientation == Doorway.DoorOrientation.Horizontal)
+            {
+
+                if (neighbour.upY != Int32.MinValue)
+                {
+                    _waypointNew = new Waypoint(door.Center + Vector2Int.down + Vector2Int.down, Waypoint.WaypointType.Greed);
                     _waypoint = new Waypoint(door.Center + Vector2Int.up + Vector2Int.up, Waypoint.WaypointType.Greed);
                     flag = true;
                 }
-
-            }else{
-                if(neighbour.rightX != Int32.MinValue){
-                    _waypoint = new Waypoint(door.Center + Vector2Int.left + Vector2Int.left, Waypoint.WaypointType.Greed);
+                else
+                {
+                    _waypointNew = new Waypoint(door.Center + Vector2Int.up + Vector2Int.up, Waypoint.WaypointType.Greed);
+                    _waypoint = new Waypoint(door.Center + Vector2Int.down + Vector2Int.down, Waypoint.WaypointType.Greed);
                     flag = true;
-                }else{
+                }
+
+            }
+            else
+            {
+                if (neighbour.rightX != Int32.MinValue)
+                {
+                    _waypointNew = new Waypoint(door.Center + Vector2Int.left + Vector2Int.left, Waypoint.WaypointType.Greed);
                     _waypoint = new Waypoint(door.Center + Vector2Int.right + Vector2Int.right, Waypoint.WaypointType.Greed);
+                    flag = true;
+                }
+                else
+                {
+                    _waypointNew = new Waypoint(door.Center + Vector2Int.right + Vector2Int.right, Waypoint.WaypointType.Greed);
+                    _waypoint = new Waypoint(door.Center + Vector2Int.left + Vector2Int.left, Waypoint.WaypointType.Greed);
                     flag = true;
                 }
             }
 
-            if(flag){
+            if (flag)
+            {
                 NextNode = neighbour;
                 return true;
             }
 
             return false;
-            
+
         }
 
         private void clearDuplicates(){
@@ -976,11 +1506,41 @@ namespace Maes.ExplorationAlgorithm.GreedG
 
             Vector2Int newDoor = (left + right) / 2;
             bool flag = true;
-
-            foreach(var neighbour in CurrentNode.Neighbours){
-                if(Vector2.Distance(newDoor, neighbour.doorway.Center) < 3){
+            foreach (var neighbour in CurrentNode.Neighbours)
+            {
+                if (Vector2.Distance(newDoor, neighbour.doorway.Center) < 3)
+                {
                     flag = false;
                 }
+                if (CurrentNode.downY > Int32.MinValue)
+                {
+                    if (CurrentNode.downY > newDoor.y)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.upY > Int32.MinValue)
+                {
+                    if (CurrentNode.upY < newDoor.y)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.rightX > Int32.MinValue)
+                {
+                    if (CurrentNode.rightX < newDoor.x)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.leftX > Int32.MinValue)
+                {
+                    if (CurrentNode.leftX > newDoor.x)
+                    {
+                        flag = false;
+                    }
+                }
+                
             }  
 
             if(flag){
@@ -997,7 +1557,7 @@ namespace Maes.ExplorationAlgorithm.GreedG
             
 
             if(flag){
-                GreedyGraph neighbour = new GreedyGraph(NodeState.Free);
+                GreedyGraph neighbour = new GreedyGraph(NodeState.Free, CurrentNode.Utility / 2);
                 Doorway newDoorway = new Doorway(newDoor, Doorway.DoorOrientation.Horizontal);
 
                 if(_position.y < newDoor.y){
@@ -1058,9 +1618,39 @@ namespace Maes.ExplorationAlgorithm.GreedG
             bool flag = true;
 
 
-            foreach(var neighbour in CurrentNode.Neighbours){
-                if(Vector2.Distance(newDoor, neighbour.doorway.Center) < 3){
+            foreach (var neighbour in CurrentNode.Neighbours)
+            {
+                if (Vector2.Distance(newDoor, neighbour.doorway.Center) < 3)
+                {
                     flag = false;
+                }
+                if (CurrentNode.downY > Int32.MinValue)
+                {
+                    if (CurrentNode.downY > newDoor.y)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.upY > Int32.MinValue)
+                {
+                    if (CurrentNode.upY < newDoor.y)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.rightX > Int32.MinValue)
+                {
+                    if (CurrentNode.rightX < newDoor.x)
+                    {
+                        flag = false;
+                    }
+                }
+                if (CurrentNode.leftX > Int32.MinValue)
+                {
+                    if (CurrentNode.leftX > newDoor.x)
+                    {
+                        flag = false;
+                    }
                 }
             }  
 
@@ -1077,7 +1667,7 @@ namespace Maes.ExplorationAlgorithm.GreedG
             
 
             if(flag){
-                GreedyGraph neighbour = new GreedyGraph(NodeState.Free);
+                GreedyGraph neighbour = new GreedyGraph(NodeState.Free, CurrentNode.Utility / 2);
                 Doorway newDoorway = new Doorway(newDoor, Doorway.DoorOrientation.Vertical);
 
                 if(_position.x < newDoor.x){
@@ -1169,6 +1759,29 @@ namespace Maes.ExplorationAlgorithm.GreedG
             if(CurrentNode.upY == Int32.MinValue){
                 if((doorway.Orientation == Doorway.DoorOrientation.Horizontal) && (_position.y < doorway.Center.y)){
                     CurrentNode.upY = doorway.Center.y;
+                }
+            }
+        }
+    
+        private void setNeighbourUtilities(){
+            int unexplored = 0;
+
+            foreach(var neighbour in CurrentNode.Neighbours){
+                if(neighbour.node.State != NodeState.Explored){
+                    unexplored++;
+                }
+            }
+
+            if(unexplored == 0){
+                return;
+            }
+
+            int minUtility = CurrentNode.Utility / CurrentNode.Neighbours.Count;
+            int freeUtility = minUtility * unexplored;
+
+            foreach(var neighbour in CurrentNode.Neighbours){
+                if(neighbour.node.State != NodeState.Explored){
+                    neighbour.node.Utility = freeUtility;
                 }
             }
         }
